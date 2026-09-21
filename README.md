@@ -1,5 +1,7 @@
 # CFB Power Index
 
+https://whcavender14.github.io/cfb-power-index/
+
 A public, static college-football analytics dashboard built with React, TypeScript, Vite, and Tailwind CSS. Visitors load versioned JSON and team-logo images; no database, application server, R installation, or API credentials are needed in their browser.
 
 ## Run locally
