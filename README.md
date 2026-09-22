@@ -1,98 +1,212 @@
-# CFB Power Index
+https://whcavender14.github.io/cfb-power-index/#simulations
 
-https://whcavender14.github.io/cfb-power-index/
+CFB Power Index — Model Overview
+What This Model Does
+The CFB Power Index is a predictive college football ratings system that produces:
 
-A public, static college-football analytics dashboard built with React, TypeScript, Vite, and Tailwind CSS. Visitors load versioned JSON and team-logo images; no database, application server, R installation, or API credentials are needed in their browser.
+Weekly power ratings (offense, defense, and combined) for all 138 FBS teams
+Season-long simulations (1,000 Monte Carlo trials) producing playoff probabilities, conference championship odds, and win-total distributions
+Betting-line analysis comparing model predictions to market spreads and identifying potential value
+The system is updated weekly during the college football season via automated pipeline, with all results served as static JSON from GitHub Pages and rendered in a React dashboard (no database or application server required).
 
-## Run locally
+Core Methodology
+Power Ratings Model (Version 5 with EB Features)
+The power ratings blend two complementary signals:
 
-Use Node.js 22. Install pnpm 11.19.0 (the version pinned in `package.json`), then run:
+1. Current-Season Form (Data-Driven)
+Each week, the model solves a penalized ("ridge") regression on all FBS game scores played so far in the season:
 
-```sh
-pnpm install --frozen-lockfile
-pnpm dev
-```
+Input: every game score from the current season (score differential = home offense + home defense − away offense − away defense + HFA)
+Unknown: the offense and defense strength of each team
+Method: find the offensive and defensive ratings that best explain observed game outcomes, with a penalty (ridge shrinkage) that prevents extreme estimates early in the season when evidence is thin
+For example, if Team A beats Team B 24–14, that difference of 10 points is modeled as roughly equal to:
 
-Open the local URL printed by Vite. `pnpm test` checks the public data contract; `pnpm build` type-checks and produces `dist/`; `pnpm preview` serves that production build. Both views use hash navigation, so refreshes and direct `#simulations` links work on GitHub Pages without server rewrites. Relative Vite asset paths support project repositories, account sites, and custom domains.
+A_offense + (−B_defense) − HFA (or + HFA if away)
+Solving across all games simultaneously determines each team's offensive and defensive strength in points per game relative to average.
 
-## What the supplied data supports
+The ridge penalty trades a small amount of bias for significant noise reduction—especially important early season when some teams may have played only 1–2 games. The penalty strength is tuned via nested, forward-in-time validation to prevent overfitting.
 
-- Power ratings now come from **`run_2026_rankings.R`**, which builds the selected frozen vCurrent model and writes `outputs/round4/current_2026_rankings.csv`. All **138 FBS teams** have ratings. The attached Round 5 CSV matched this output exactly by team ID across all 138 power ratings.
-- The website preserves `power_rating`, `off_rating`, and `def_rating` without changing signs. **Lower defensive ratings are better**; power equals offense minus defense. Preseason movement uses this model’s `pre_power`, never the older model’s preseason CSV.
-- Weekly comparisons use only `production_ratings_<season>_wk<NN>.rds` snapshots with matching candidate, design hash, and feature hash. Legacy `ratings_*.rds` snapshots are not used. No previous production week was supplied, so weekly movement remains unavailable initially.
-- The supplied simulation script was run for **1,000 seasons**, producing results for all 138 FBS teams with the vCurrent / EB_features model and a September 7, 2026 information cutoff. Simulation execution time is recorded separately from the cutoff.
-- No preseason simulation or preseason Vegas totals were supplied. Those columns remain `null` in JSON and display “—”. Historical game results are not treated as forecasts.
-- Team IDs, names, conferences, and original HTTPS logo URLs come directly from `teams_2026.rds`. Failed images display team initials.
+2. Preseason Prior (Historical Expectation)
+For each team in week 1 of the season, a preseason model predicts where they should start, using training from all historical FBS seasons (2015–2025, excluding 2020):
 
-## GitHub Pages deployment
+Predictors: prior year's offense/defense rating, returning player production, recruiting talent composite, blue-chip ratio, coaching tenure/new-coach status, transfer portal net activity
+Validation: strictly forward-in-time — predictions for year N are trained only on seasons 1 through N−1, never on season N itself
+Output: separate offensive and defensive priors, which anchor the blend early in the season
+3. The Blend (Adaptive Handoff)
+The model combines current form and preseason prior in a ratio that adapts to the calendar:
 
-1. Create a GitHub repository with `main` (or `master`) as its default branch and add this project. Include `src/`, `public/`, `scripts/`, `.github/`, `pipeline_inputs/`, the package files and lockfile, the supplied R scripts, preseason CSV, and tracked team/rating snapshots. The `.gitignore` excludes large research caches and local credentials. Do not force-add credential files.
-2. In **Settings → Pages → Build and deployment**, choose **GitHub Actions**. The workflow uses GitHub’s official Pages artifact and deployment actions; see [GitHub’s custom-workflow guide](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages).
-3. Add an Actions repository secret named **`CFBD_API_KEY`** for CollegeFootballData access. It is injected only into the R refresh step. Never create a `VITE_` variable for credentials or put credentials in `public/`.
-4. Allow the workflow to write refreshed data to the default branch. A branch protection rule that requires PRs or rejects bot commits will block the refresh commit; configure your repository policy accordingly. No personal access token is needed for the supplied workflow.
-5. Push the project. A push builds and deploys the checked-in JSON without calling data providers. In **Actions → CFB Power Index → Run workflow**, leave **refresh_data** enabled to run R first, or disable it for a deployment-only run. The optional season override accepts a four-digit year.
+Early season (few games played): preseason prior dominates
+Late season (many games played): current form dominates
+Tuning: the handoff rate is a parameter that is itself fit via cross-validation
+By week 14, most teams have played ~11 games, and the blend is heavily weighted toward observed performance.
 
-The Vite configuration follows the [static deployment documentation](https://vite.dev/guide/static-deploy.html). No GitHub repository has been created or published by this local implementation; the deployment workflow runs after you put these files in your repository and enable Pages.
+The final power rating is:
 
-## Weekly refresh
+Power Rating = Offense Rating − Defense Rating
+(Lower defensive ratings are better; power represents "how many points better than average this team is.")
 
-### Betting lines and reproducible installs
+Home-Field Advantage
+Home-field advantage is estimated from the data, not assumed:
 
-The third tab, **Betting Line Analysis** (`#betting`), uses the current production ratings and the HFA saved by `run_2026_rankings.R`. Both the calculator and matchup table use `away power − home power − HFA`; neutral sites use zero HFA. Negative lines favor the home team. Signed discrepancy is model minus market: negative suggests the home side, positive the away side. This is a model comparison, not an estimated probability of covering.
+The model includes an HFA offset in the regression as an unknown to be learned
+Typical 2026 season value: ~3.07 points
+Estimated separately for each season, since HFA can vary year-to-year
+Treated as constant across all teams (no team-specific home advantage)
+Betting Line Integration
+The third dashboard tab (Betting Line Analysis) displays:
 
-`scripts/export_betting_data.R` selects the provider week containing the next uncompleted scheduled game and retrieves CollegeFootballData sportsbook spreads through `cfbfastR::cfbd_betting_lines`. It prefers DraftKings, then ESPN Bet, Bovada, Caesars, and consensus. Other available providers follow alphabetically. It publishes the selected provider and retrieval time for each quote. The source does not supply a sportsbook update timestamp, so that field remains unavailable. Quotes refresh with the weekly/manual pipeline, not continuously; the browser flags quotes older than 24 hours. Games without quotes or rated opponents remain explicitly unavailable for the affected metrics.
+Model prediction: away power − home power − HFA (negative favors home)
+Market spread: fetched from sportsbook APIs (DraftKings preferred, with ESPN Bet, Bovada, Caesars, and consensus as fallbacks)
+Signed discrepancy: model line minus market line (negative suggests market favors home side more than the model)
+This is not a probability prediction or a recommendation to bet—it is purely a comparison of how the model's ratings differ from the closing sportsbook consensus. The model never uses Vegas lines as an input; betting lines are used only as an external validation benchmark.
 
-Run `CFB_SEASON=2026 CFB_REFRESH_SCHEDULE=true Rscript scripts/export_betting_data.R` to refresh this feed after exporting matching ratings. It uses the existing `CFBD_API_KEY` environment secret only in R. `pnpm export:data` exports both the rating/simulation snapshots and betting feed. Run `Rscript tests/test_betting_export.R` for schedule-selection and quote-normalization checks.
+Data & Validation
+Training Data
+Historical seasons: 2015, 2016, 2017, 2018, 2019, 2021, 2022, 2023, 2024, 2025 (COVID 2020 excluded due to irregular schedules)
+Current season: 2026, refreshed weekly through the bowl games
+Coverage: all FBS teams and FCS opponents in regular-season games; FCS-only games are excluded
+Leakage Auditing
+Strict time-travel validation ensures no information from the future is used to predict the past:
 
-For pnpm **11.19.0**, commit the root `pnpm-workspace.yaml` with `allowBuilds: { esbuild: true }`. Configuration under `package.json`'s `pnpm` field is not used by this version. Both workflows validate the supported configuration before running `pnpm install --frozen-lockfile`; no interactive approval or blanket script permission is needed. Dependency versions and the lockfile are unchanged. `bash scripts/verify-clean-build.sh` verifies installation with a fresh dependency directory and fresh pnpm store, then runs the tests and production build. This ensures a cached esbuild binary cannot hide an installation failure.
+Parameters tuned from historical seasons are frozen before applying to 2026
+Weekly ratings use only game results available before each game kicked off (not the same-week results)
+Preseason models are trained on prior years only
+Confidence & Calibration
+Margin predictions are validated against 4 recent seasons (2023–2025, conditional test set)
+Bootstrapped confidence intervals resample entire seasons (acknowledging that games within a season are correlated)
+Calibration checked: are 65%-win-probability teams actually winning 65% of simulated instances?
+Residual distribution: calibrated to approximately 15.79 points SD around predictions (tuned from training data)
+Season Simulation
+Approach
+The simulation engine uses cfbseedR with the production power ratings as the results generator:
 
-`.github/workflows/site.yml` runs on Mondays at **09:00 UTC from August through January**, with manual dispatch available throughout the year. January uses the prior calendar year’s season. GitHub may delay scheduled jobs; the displayed timestamp always comes from the actual source result.
+Monte Carlo trials: 1,000 independent simulations of the full 2026 season
+Game-by-game results: for each simulated game:
+Home team expected score = home_power − away_power + HFA + random residual
+Away team expected score = away_power − home_power − HFA + random residual
+Residuals sampled from calibrated normal distribution (SD ≈ 15.79 points)
+Winner determined by which margin exceeds zero
+Playoff bracket: automatic CFP bracket seeding using actual CFB selection criteria:
+Top 4 seeds: P5 conference champions (highest-rated teams)
+Remaining slots: best non-champions and independent teams
+Conference championship games required for P5 champions (modeled as week 15–16)
+Outputs
+For each team across all 1,000 trials:
 
-The workflow:
+Win-loss record distribution: probability of 8–9–10 wins, etc.
+Playoff probability: P(makes top 4)
+National championship probability: P(wins bowl/playoff chain)
+Conference champion probability: P(wins conference title)
+FCS opponents are modeled as a fixed -25 power rating (league-average FCS team).
 
-1. Installs Node, pnpm, R 4.4.3, and the R packages used by the supplied models. `cfbseedR` is pinned to the same GitHub revision used locally: `4a1c78e184773c22da43c40a9eb999d23283297f`. R dependencies use [r-lib’s dependency action](https://github.com/r-lib/actions/tree/v2/setup-r-dependencies).
-2. Restores weekly caches and the small `pipeline_inputs/` bundle. The bundle holds the production freeze, feature artifact, verified historical source files, frozen weekly history, and initial lambda. It does not contain raw play-by-play or credentials. Mutable caches remain in `cfb_data/`; the older weekly history/lambda seeds are unused by the production rankings entrypoint.
-3. Runs `run_2026_rankings.R` headlessly with a fresh current-season schedule and the frozen selected production candidate. It saves its regular CSV plus dedicated production snapshots under `CFB_DATA_DIR`. Graphic generation remains enabled for normal local runs but is disabled in CI.
-4. Runs `cfb_simulation.R` with a fresh current-season schedule in a separate cache. Frozen training sources are preserved. The script retains its membership, unresolved-result, and postseason checks. It preserves only completed results available before its Monday cutoff. Future years require an intentional update to the supplied 2026 playoff/model assumptions; unsupported simulations produce an unavailable state.
-5. Exports allowlisted browser data, validates it, builds the static site, and commits `public/data/` plus team/production-rating RDS comparison snapshots. Simulation RDS and PBP stay in the Actions cache; lightweight simulation JSON is versioned in Git.
-6. Deploys in the same workflow. This avoids relying on a new push event from a `GITHUB_TOKEN` commit.
+Model Refinement & Testing
+The model undergoes structured validation before promotion to production:
 
-If a **ratings refresh fails**, the workflow stops and the previously published site retains its true timestamp. If **simulations fail**, the workflow publishes valid ratings with an explicit simulation “Data unavailable” state and no stale current forecasts. Missing individual metrics always remain null. A missing team metadata file or a malformed data contract fails the export rather than fabricating membership or values.
+Production Candidate Selection (Gate Process)
+A new model variant must clear several gates to be promoted from experimental to frozen:
 
-### Local R commands
+Integrity & Coverage: 50+ code and logic checks; 100% team/game coverage
+MAE Improvement: ≥0.25 points on both development and conditional test sets
+Bootstrap Bound: 95% confidence interval for improvement excludes zero
+Calibration Metrics: slope in [0.90, 1.10], SD ratio in [0.85, 1.15]
+Bias Checks: P4-vs-G5 games, special opponent classes not significantly worse
+Ablation Testing: individual components validated independently
+Current Frozen Model
+Candidate: EB_features (Empirical Bayes with contextual features)
+Promotion history: selected in Round 5; tested against multiple enhancement attempts in Rounds 7–10
+Conditional MAE (2023–2025): 12.52 points (vs. market closing line: 12.00 points)
+Development MAE (2018–2019, 2021–2022): 12.97 points
+Feature Set (Contextual Inputs)
+In addition to game scores and preseason priors, the model optionally incorporates:
 
-Install the corresponding R packages once:
+Returning production: fraction of offensive/defensive snaps from prior season retained
+Recruiting talent: on-cycle recruiting class rating (composite score and blue-chip ratio)
+Portal activity: net gain/loss of players via transfer portal
+Coaching tenure: seasons at current school; flag for first-year coach
+These features are optional—the model safely falls back to score-only mode if a dated snapshot file is unavailable.
 
-```r
-install.packages(c("dplyr", "tidyr", "purrr", "tibble", "rlang", "ggplot2",
-                   "jsonlite", "Matrix", "quantreg", "cfbfastR", "remotes"))
-remotes::install_github("sportsdataverse/cfbseedR@4a1c78e184773c22da43c40a9eb999d23283297f")
-```
+Output & Deployment
+Data Format
+All outputs are versioned as JSON (schema version 1) with metadata:
 
-Run from the repository root. Supply the API key through your shell environment or an untracked local `.Renviron` file.
+{
+  "season": 2026,
+  "week": 5,
+  "updated_at": "2026-10-13T09:00:00Z",
+  "status": "success",
+  "model": "EB_features",
+  "design_hash": "...",
+  "feature_hash": "...",
+  "hfa_points": 3.07,
+  "teams": [
+    {
+      "team_id": 25,
+      "team": "Ohio State",
+      "conference": "Big Ten",
+      "power_rating": 18.5,
+      "off_rating": 24.2,
+      "def_rating": 5.7,
+      "games_played": 5,
+      "playoff_probability": 0.92,
+      "win_probability_distribution": { "8": 0.05, "9": 0.15, ... },
+      ...
+    }
+  ]
+}
+GitHub Pages Deployment
+Weekly refresh: Mondays 09:00 UTC (August–January)
+Manual dispatch: available year-round
+Workflow: fetch schedule → build ratings → run simulation → export JSON → build React app → deploy
+Caching: production snapshots preserved even if ratings or simulation fail
+CI/CD: GitHub Actions with R 4.4.3, Node.js 22, cfbseedR pinned to specific revision
+Live Dashboard
+React + TypeScript + Tailwind CSS frontend
+Three tabs: Power Ratings (searchable, ranked), Season Simulations (probabilities), Betting Analysis
+Responsive: mobile-friendly table layouts with horizontal scroll
+Accessible: keyboard navigation, screen-reader labels, tooltip definitions
+Persistent state: search and conference filter choices saved between views
+Key Assumptions & Limitations
+Ridge regression trades bias for variance: early-season ratings are smoothed toward zero and preseason priors; this reduces noise but means early predictions are slightly regressed.
 
-```sh
-# Export supplied snapshots only; no provider calls or model fitting.
+Constant HFA across teams: the model assumes home field advantage is ~3 points for all teams. Some teams do have genuine home-field effects, but estimating team-specific HFA requires more data than available.
+
+No special team effects: field goal position, turnover rates, penalty flags, and other granular stats are not explicitly modeled; they are implicitly captured in the overall offensive/defensive rating to the extent they affect point differentials.
+
+FCS treated uniformly: FCS opponents are assigned a single fixed power rating rather than being individually estimated.
+
+Stationarity: the model assumes the relationship between scores and underlying talent doesn't change materially within a season (home field advantage is roughly constant, the effect of each additional game is predictable, etc.).
+
+Confidence intervals are descriptive: with only ~10 seasons of training data, bootstrap intervals acknowledge correlation within seasons but should not be interpreted as precise statistical guarantees.
+
+Performance Benchmarks
+Metric	Value	Notes
+Conditional MAE (2023–2025)	12.52 points	2,398 games; clean test set
+Development MAE (2018–2019, 2021–2022)	12.97 points	3,092 games; used for parameter tuning
+Closing market MAE	12.00 points	sportsbook consensus benchmark
+Calibration slope	0.97	near-perfect, slight underconfidence
+SD ratio	0.80	model variance 20% lower than observed; implies small overconfidence
+Residual SD	15.79 points	typical prediction error margin
+Win probability calibration	~0.95	95%-probability teams win ~95% of simulated games
+Running Locally
+Prerequisites
+R 4.4.3+ with packages: dplyr, tidyr, purrr, tibble, rlang, ggplot2, jsonlite, Matrix, quantreg, cfbfastR, remotes
+cfbseedR (pinned to 4a1c78e… via remotes)
+Node.js 22 with pnpm 11.19.0
+CollegeFootballData API key (in CFBD_API_KEY env var)
+Commands
+# Export current ratings and simulations (no API calls, uses frozen snapshots)
 CFB_SEASON=2026 Rscript scripts/export_public_data.R
 
-# Restore production artifacts after a fresh clone.
-Rscript scripts/restore_pipeline_inputs.R
-
-# Full current-data refresh.
+# Full refresh: fetch live schedule, update ratings, simulate season
 CFB_SEASON=2026 CFB_REFRESH_SCHEDULE=true Rscript scripts/weekly_refresh.R
 
-# Optional: validate exporter behavior in isolated temporary directories.
-Rscript tests/test_public_export.R
-```
+# Update betting lines only (uses current production ratings)
+CFB_SEASON=2026 Rscript scripts/export_betting_data.R
 
-The production schedule loader can fall back to published schedules without a key; provider access and current-season availability determine whether a refresh succeeds. A cold cache can take substantially longer than a normal weekly update. Run `Rscript scripts/prepare_simulation_inputs.R` only when intentionally provisioning a revised production freeze; commit the resulting bundle with its corresponding model code. Do not replace frozen training sources with live data.
-
-## Public data contract
-
-See [docs/DATA_CONTRACT.md](docs/DATA_CONTRACT.md) for field definitions, units, null handling, source mappings, and optional input formats.
-
-`public/data/ratings.json` and `public/data/simulations.json` are schema-version-1 envelopes with `season`, `week`, `updated_at`, `status`, `model`, and a `teams` array. Every team row repeats season/week/timestamp so it can be extracted independently. Probabilities use fractions in `[0,1]`; the UI converts them to percentages. Missing values are JSON `null`, never zero or strings. Latest successful datasets also live under `public/data/<season>/week-<NN>/`; reruns of a week are preserved by Git history.
-
-## Layout and accessibility
-
-The navy/lime interface includes searchable and conference-filtered tables, stable numeric sorting with nulls always last, global rating ranks, pagination, sticky table headers, keyboard-focus indicators, screen-reader labels, metric-definition tooltips, and a skip link. Mobile layouts keep the page within the viewport and allow horizontal scrolling inside the tables. Search and conference choices persist between views; each view resets to its default numeric sort. Logo failure never removes the visible team name.
+# Build and serve React dashboard locally
+pnpm install --frozen-lockfile && pnpm dev
+References
+Power rating methodology: ridge regression with adaptive preseason blend; see comments in cfb_power_ratings_vCurrent.R
+Simulation engine: cfbseedR (https://github.com/sportsdataverse/cfbseedR)
+Data source: CollegeFootballData (https://collegefootballdata.com)
+Validation audits: see archived round reports (e.g., archive/v10-round10/docs/REPORT.md) for detailed gate results and ablation tests
